@@ -123,7 +123,7 @@
   </div>
 
   <div class="tabs">
-    <button class="tab active" onclick="setModule('nav')">nav</button>
+    <button class="tab active" onclick="setModule('pulse')">pulse</button>
     <button class="tab" onclick="setModule('radio')">radio</button>
     <button class="tab" onclick="setModule('signal')">signal</button>
     <button class="tab" onclick="setModule('unlock')">unlock</button>
@@ -150,6 +150,9 @@ const STEP = 360 / NUM_RUNES; // 30°
 // Cluster definitions: which rune indices belong to each cluster
 // 0 = top (-90°), going clockwise
 // Cluster boundaries are between runes, at midpoints
+// One canonical glyph per rune — used on ring circles AND unlock screen
+const RUNE_GLYPHS = ['◈','⍜','⌖','⊕','⍉','⏻','⊛','⌬','⋈','⍙','⍦','⌘'];
+
 const CLUSTERS = [
   { name: 'navigation',  indices: [0,1,2],  color: '#1D9E75', known: ['full','full','partial'] },
   { name: 'sensing',     indices: [3,4,5],  color: '#7F77DD', known: ['full','full','partial'] },
@@ -262,10 +265,15 @@ function buildRing() {
     // Background circle
     svg.appendChild(ns('circle', { cx:pos.x, cy:pos.y, r:11, fill:'#0d0520', stroke:strokeColor, 'stroke-width':'1', opacity }));
 
-    // Draw rune glyph inside
-    const g = ns('g', { opacity });
-    drawRuneGlyph(g, i, pos.x, pos.y, info.color, info.known);
-    svg.appendChild(g);
+    // Glyph text — same character used on unlock screen
+    const glyphEl = ns('text', {
+      x: pos.x, y: pos.y,
+      'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-size': '11', 'font-family': 'Courier New, monospace',
+      fill: strokeColor, opacity
+    });
+    glyphEl.textContent = RUNE_GLYPHS[i];
+    svg.appendChild(glyphEl);
   }
 
   // Inner screen bezel
@@ -374,7 +382,7 @@ function drawRuneGlyph(g, index, x, y, color, known) {
 
 // ── Screen content ─────────────────────────────────────────
 const MODULES = {
-  nav: {
+  pulse: {
     gem: ['#1D9E75','#9FE1CB'],
     draw(svg) {
       svg.innerHTML = '';
@@ -522,7 +530,7 @@ function applyRotation(delta = 0) {
 
 
 // ── Unlock state ───────────────────────────────────────────
-const UNLOCK_SYMBOLS = ['⊕','◈','⌬','⍉','⏻','⊛','⋈','⍙','⍜'];
+const UNLOCK_SYMBOLS = RUNE_GLYPHS; // same glyphs as ring so screen matches ring
 let unlockSlot = 0;           // which slot is active (0-3)
 let unlockSymbolIdx = 0;      // which symbol is currently shown
 let lockedSymbols = ['','','','']; // symbols locked in per slot
@@ -545,8 +553,7 @@ function getSymbolAtGem() {
       closest = i;
     }
   }
-  // Map rune index to unlock symbol index (wrap to UNLOCK_SYMBOLS length)
-  return closest % UNLOCK_SYMBOLS.length;
+  return closest; // direct rune index — UNLOCK_SYMBOLS === RUNE_GLYPHS so 1:1
 }
 
 function updateUnlock(delta) {
@@ -648,13 +655,13 @@ function drawCube(cx, cy, size) {
 
 
 
-function updateRadio(cubeScreenX) {
+function updateRadio() {
   const tuner = document.getElementById('radioTuner');
   const freqEl = document.getElementById('radioFreq');
   if (!tuner || !freqEl) return;
 
-  // Map cubeX (CUBE_MIN..CUBE_MAX) to bar range (14..124 = 11 bars * 11px + 8px)
-  const norm = (cubeScreenX - CUBE_MIN) / (CUBE_MAX - CUBE_MIN); // 0..1
+  // Drive tuner directly from ringAngle — independent of cubeX
+  const norm = ((ringAngle % 360) + 360) % 360 / 360; // 0..1
   const tunerX = 14 + norm * (134 - 14);
   tuner.setAttribute('x1', tunerX);
   tuner.setAttribute('x2', tunerX);
@@ -663,7 +670,7 @@ function updateRadio(cubeScreenX) {
   const freq = 88.0 + norm * 20.0;
   freqEl.textContent = freq.toFixed(1);
 
-  // Highlight the bar the tuner is nearest to
+  // Highlight nearest bar
   const bars = [16,26,20,36,24,32,18,28,14,22,30];
   const activeBar = Math.round(norm * (bars.length - 1));
   bars.forEach((h, i) => {
@@ -672,7 +679,6 @@ function updateRadio(cubeScreenX) {
     const isActive = i === activeBar;
     bar.setAttribute('fill', isActive ? '#EF9F27' : '#533888');
     bar.setAttribute('opacity', isActive ? '1' : '0.45');
-    // Also update height slightly around active for a visual sweep effect
     const dist = Math.abs(i - activeBar);
     const newH = dist === 0 ? h * 1.15 : dist === 1 ? h * 0.9 : h;
     bar.setAttribute('height', Math.round(newH));
@@ -713,19 +719,26 @@ function updateNavNeedle(cubeScreenX) {
     blip.setAttribute('cy', sc + br * Math.sin(angleRad));
   }
 }
+function activeTab() {
+  const el = document.querySelector('.tab.active');
+  return el ? el.textContent : '';
+}
+
 function updateCube(delta = 0) {
-  // Move cubeX directly by delta — clamp after so reversing always responds immediately
-  cubeX = Math.max(CUBE_MIN, Math.min(CUBE_MAX, cubeX + delta * CUBE_SPEED));
+  // Cube only moves when on pulse screen
+  if (activeTab() === 'pulse') {
+    cubeX = Math.max(CUBE_MIN, Math.min(CUBE_MAX, cubeX + delta * CUBE_SPEED));
+  }
   drawCube(cubeX, CH/2 - 8, 46);
   updateNavNeedle(cubeX);
-  updateRadio(cubeX);
-  if (document.querySelector('.tab.active') && document.querySelector('.tab.active').textContent === 'unlock') {
+  updateRadio();
+  if (activeTab() === 'unlock') {
     updateUnlock(delta);
   }
 }
 
 buildRing();
-setModule('nav');
+setModule('pulse');
 updateCube();
 document.getElementById('sideBtn').addEventListener('click', () => {
   if (document.querySelector('.tab.active') && document.querySelector('.tab.active').textContent === 'unlock') {
