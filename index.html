@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Temporal Compass — v2</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #2D1B4E;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+    user-select: none;
+  }
+  .scene {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 24px;
+  }
+  .title {
+    font-size: 11px; letter-spacing: 0.18em;
+    color: #A888DD; text-transform: uppercase;
+  }
+  .compass-wrap {
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .device {
+    position: relative; width: 300px; height: 370px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .face {
+    position: relative; width: 300px; height: 300px; flex-shrink: 0;
+  }
+  .ring-layer {
+    position: absolute; inset: 0;
+    cursor: grab; border-radius: 50%;
+  }
+  .ring-layer.dragging { cursor: grabbing; }
+  .ring-svg { width: 100%; height: 100%; display: block; }
+  .screen-wrap {
+    position: absolute;
+    width: 148px; height: 148px;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 4; pointer-events: none;
+  }
+  .screen-svg { width: 100%; height: 100%; display: block; }
+  .side-btn {
+    position: absolute; right: 0px; top: 50%;
+    transform: translateY(-50%);
+    width: 11px; height: 32px;
+    background: #3A2460; border-radius: 5px;
+    border: 1px solid #533888; z-index: 10;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 3px;
+    cursor: pointer;
+  }
+  .btn-line { width: 5px; height: 2px; background: #7B4FBF; border-radius: 1px; }
+  .btn-line:last-child { opacity: 0.3; }
+  .grip {
+    width: 68px; height: 80px; margin-top: -6px;
+    background: #1e1040;
+    border: 1.5px solid #3A2460; border-top: none;
+    border-radius: 0 0 36px 36px;
+  }
+  .tabs {
+    display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+  }
+  .tab {
+    padding: 5px 14px; border-radius: 20px;
+    font-family: 'Courier New', monospace; font-size: 10px;
+    letter-spacing: 0.1em; border: 0.5px solid #3A2460;
+    background: transparent; color: #A888DD; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .tab:hover { border-color: #C4F135; color: #F0E8FF; }
+  .tab.active { background: rgba(196,241,53,0.08); border-color: #C4F135; color: #C4F135; }
+  .readout {
+    font-family: 'Courier New', monospace; font-size: 10px;
+    color: #533888; letter-spacing: 0.12em;
+  }
+  .hint { font-size: 9px; color: #3A2460; letter-spacing: 0.1em; font-family: 'Courier New', monospace; }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+  @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  @keyframes pulse { 0%,100%{opacity:0.6} 50%{opacity:1} }
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="title">Temporal Compass — UI Prototype</div>
+
+  <div style="width:300px;height:110px;background:#100820;border-radius:12px;border:0.5px solid #3A2460;overflow:hidden;position:relative;">
+    <canvas id="cubeCanvas" width="300" height="110" style="display:block;"></canvas>
+    <div style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);font-family:Courier New,monospace;font-size:9px;color:#3A2460;letter-spacing:0.1em;white-space:nowrap;">drag ring to move</div>
+  </div>
+
+  <div class="compass-wrap">
+    <div class="device">
+      <div class="face">
+        <div class="ring-layer" id="ringLayer">
+          <svg class="ring-svg" id="ringSvg" viewBox="0 0 300 300"></svg>
+        </div>
+        <div class="screen-wrap">
+          <svg class="screen-svg" id="screenSvg" viewBox="0 0 148 148"></svg>
+        </div>
+        <!-- Static gem — sits outside rotating ring, never rotates -->
+        <div id="gemOverlay" style="position:absolute;top:2px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;">
+          <svg width="24" height="24" viewBox="0 0 24 24" id="gemSvg">
+            <polygon id="gemShape" points="12,2 21,10 12,20 3,10" fill="#1D9E75" stroke="#9FE1CB" stroke-width="1"/>
+            <polygon points="12,5 18,10 12,17 6,10" fill="white" opacity="0.2"/>
+          </svg>
+        </div>
+        <div class="side-btn" id="sideBtn">
+          <div class="btn-line"></div>
+          <div class="btn-line"></div>
+          <div class="btn-line"></div>
+        </div>
+      </div>
+      <div class="grip"></div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="setModule('nav')">nav</button>
+    <button class="tab" onclick="setModule('radio')">radio</button>
+    <button class="tab" onclick="setModule('signal')">signal</button>
+    <button class="tab" onclick="setModule('unlock')">unlock</button>
+  </div>
+  <div class="readout" id="readout">ring · 0°</div>
+  <div class="hint">drag ring to rotate</div>
+</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────
+const CX = 150, CY = 150;
+const BEZEL_R   = 148;   // outer bezel edge
+const RING_OUTER = 138;  // outer edge of ring track
+const RING_MID   = 124;  // centerline of ring — symbols sit here
+const RING_INNER = 110;  // inner edge of ring track
+const SCREEN_R   = 74;   // screen outer radius
+const RING_TRACK_W = RING_OUTER - RING_INNER; // 28px
+
+// ── Rune layout ────────────────────────────────────────────
+// 12 runes, evenly spaced = 30° apart, starting at -90° (top)
+const NUM_RUNES = 12;
+const STEP = 360 / NUM_RUNES; // 30°
+
+// Cluster definitions: which rune indices belong to each cluster
+// 0 = top (-90°), going clockwise
+// Cluster boundaries are between runes, at midpoints
+const CLUSTERS = [
+  { name: 'navigation',  indices: [0,1,2],  color: '#1D9E75', known: ['full','full','partial'] },
+  { name: 'sensing',     indices: [3,4,5],  color: '#7F77DD', known: ['full','full','partial'] },
+  { name: 'interaction', indices: [6,7,8],  color: '#EF9F27', known: ['full','partial','partial'] },
+  { name: 'unknown',     indices: [9,10,11],color: '#533888', known: ['none','none','none'] },
+];
+
+// Flat lookup: index → cluster info + known state
+const runeInfo = new Array(NUM_RUNES);
+CLUSTERS.forEach(cl => {
+  cl.indices.forEach((idx, i) => {
+    runeInfo[idx] = { cluster: cl.name, color: cl.color, known: cl.known[i] };
+  });
+});
+
+// ── SVG helpers ────────────────────────────────────────────
+function ns(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k, v));
+  return el;
+}
+function toRad(d) { return d * Math.PI / 180; }
+function pt(angleDeg, r, ocx=CX, ocy=CY) {
+  return {
+    x: ocx + r * Math.cos(toRad(angleDeg)),
+    y: ocy + r * Math.sin(toRad(angleDeg))
+  };
+}
+// SVG large-arc path between two angles on a circle
+function arcPath(startDeg, endDeg, r) {
+  let sweep = endDeg - startDeg;
+  if (sweep < 0) sweep += 360;
+  const large = sweep > 180 ? 1 : 0;
+  const s = pt(startDeg, r);
+  const e = pt(endDeg, r);
+  return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 1 ${e.x} ${e.y}`;
+}
+
+// ── Build ring SVG ─────────────────────────────────────────
+function buildRing() {
+  const svg = document.getElementById('ringSvg');
+  svg.innerHTML = '';
+
+  // Outer bezel fill
+  const bezel = ns('circle', { cx:CX, cy:CY, r:BEZEL_R, fill:'#1e1040', stroke:'#3A2460', 'stroke-width':'1' });
+  svg.appendChild(bezel);
+
+  // Ring track base
+  const track = ns('circle', { cx:CX, cy:CY, r:RING_MID, fill:'none', stroke:'#251350', 'stroke-width': RING_TRACK_W });
+  svg.appendChild(track);
+
+  // Cluster arcs — each spans from the midpoint before first rune to midpoint after last rune
+  CLUSTERS.forEach(cl => {
+    const first = cl.indices[0];
+    const last  = cl.indices[cl.indices.length - 1];
+    // Arc starts half a step before the first rune, ends half a step after the last
+    const startDeg = runeAngle(first) - STEP/2;
+    const endDeg   = runeAngle(last)  + STEP/2;
+    const arc = ns('path', {
+      d: arcPath(startDeg, endDeg, RING_MID),
+      fill: 'none',
+      stroke: cl.color,
+      'stroke-width': RING_TRACK_W,
+      opacity: '0.28'
+    });
+    svg.appendChild(arc);
+  });
+
+  // Ring track border rings
+  svg.appendChild(ns('circle', { cx:CX, cy:CY, r:RING_OUTER, fill:'none', stroke:'#44296E', 'stroke-width':'0.5' }));
+  svg.appendChild(ns('circle', { cx:CX, cy:CY, r:RING_INNER, fill:'none', stroke:'#44296E', 'stroke-width':'0.5' }));
+
+  // Tick marks — 60 ticks (every 6°)
+  for (let i = 0; i < 60; i++) {
+    const a = -90 + i * 6;
+    const major = i % 5 === 0;
+    const r1 = major ? RING_INNER + 2 : RING_INNER + 4;
+    const r2 = major ? RING_OUTER - 2 : RING_OUTER - 4;
+    const p1 = pt(a, r1), p2 = pt(a, r2);
+    svg.appendChild(ns('line', {
+      x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y,
+      stroke: '#44296E',
+      'stroke-width': major ? '1' : '0.4',
+      'stroke-linecap': 'round'
+    }));
+  }
+
+  // Cluster dividers — at midpoints between clusters, spanning full ring width
+  CLUSTERS.forEach((cl, ci) => {
+    const nextCl = CLUSTERS[(ci + 1) % CLUSTERS.length];
+    const lastOfCurrent = cl.indices[cl.indices.length - 1];
+    const firstOfNext   = nextCl.indices[0];
+    const divAngle = (runeAngle(lastOfCurrent) + runeAngle(firstOfNext)) / 2;
+    const p1 = pt(divAngle, RING_INNER);
+    const p2 = pt(divAngle, RING_OUTER);
+    svg.appendChild(ns('line', {
+      x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y,
+      stroke: '#C4F135', 'stroke-width': '1.5', 'stroke-linecap': 'round'
+    }));
+  });
+
+  // Rune symbol circles — evenly spaced on RING_MID
+  for (let i = 0; i < NUM_RUNES; i++) {
+    const angle = runeAngle(i);
+    const pos = pt(angle, RING_MID);
+    const info = runeInfo[i];
+    const opacity = info.known === 'full' ? 1 : info.known === 'partial' ? 0.55 : 0.22;
+    const strokeColor = info.known === 'full' ? info.color : info.known === 'partial' ? info.color : '#2D1B4E';
+
+    // Background circle
+    svg.appendChild(ns('circle', { cx:pos.x, cy:pos.y, r:11, fill:'#0d0520', stroke:strokeColor, 'stroke-width':'1', opacity }));
+
+    // Draw rune glyph inside
+    const g = ns('g', { opacity });
+    drawRuneGlyph(g, i, pos.x, pos.y, info.color, info.known);
+    svg.appendChild(g);
+  }
+
+  // Inner screen bezel
+  svg.appendChild(ns('circle', { cx:CX, cy:CY, r:SCREEN_R + 8, fill:'#0d0520', stroke:'#3A2460', 'stroke-width':'2' }));
+  svg.appendChild(ns('circle', { cx:CX, cy:CY, r:SCREEN_R, fill:'#100820', stroke:'#2D1B4E', 'stroke-width':'0.5' }));
+
+  // (gem is now a static HTML overlay — not drawn inside the rotating SVG)
+}
+
+function runeAngle(i) {
+  // 0 = top = -90°, clockwise
+  return -90 + i * STEP;
+}
+
+// ── Gem ────────────────────────────────────────────────────
+let gemFill = '#1D9E75', gemStroke = '#9FE1CB';
+function updateGem() {
+  const shape = document.getElementById('gemShape');
+  if (!shape) return;
+  shape.setAttribute('fill', gemFill);
+  shape.setAttribute('stroke', gemStroke);
+}
+
+// ── Rune glyphs (12 unique vector designs) ─────────────────
+function drawRuneGlyph(g, index, x, y, color, known) {
+  const c = known === 'full' ? color : known === 'partial' ? color : '#3A2460';
+  const s = 6; // glyph scale radius
+
+  const designs = [
+    // 0 — navigate: compass needle + cross
+    () => {
+      g.appendChild(ns('circle', {cx:x,cy:y,r:s,fill:'none',stroke:c,'stroke-width':'0.8'}));
+      g.appendChild(ns('line',{x1:x,y1:y-s,x2:x,y2:y-1,stroke:'#C4F135','stroke-width':'1.5','stroke-linecap':'round'}));
+      g.appendChild(ns('line',{x1:x,y1:y+1,x2:x,y2:y+s,stroke:c,'stroke-width':'1','stroke-linecap':'round'}));
+      g.appendChild(ns('circle',{cx:x,cy:y,r:1.5,fill:'#C4F135'}));
+    },
+    // 1 — temporal view: eye with center dot
+    () => {
+      g.appendChild(ns('path',{d:`M ${x-s},${y} Q ${x},${y-s} ${x+s},${y} Q ${x},${y+s} ${x-s},${y}`,fill:'none',stroke:c,'stroke-width':'1','stroke-linecap':'round'}));
+      g.appendChild(ns('circle',{cx:x,cy:y,r:2,fill:'none',stroke:c,'stroke-width':'0.8'}));
+      g.appendChild(ns('circle',{cx:x,cy:y,r:1,fill:c}));
+    },
+    // 2 — teleport: diamond with spurs
+    () => {
+      g.appendChild(ns('polygon',{points:`${x},${y-s} ${x+s},${y} ${x},${y+s} ${x-s},${y}`,fill:'none',stroke:c,'stroke-width':'0.9'}));
+      g.appendChild(ns('line',{x1:x-s,y1:y,x2:x-s-3,y2:y-2,stroke:c,'stroke-width':'0.8','stroke-linecap':'round'}));
+      g.appendChild(ns('line',{x1:x-s,y1:y,x2:x-s-3,y2:y+2,stroke:c,'stroke-width':'0.8','stroke-linecap':'round'}));
+      g.appendChild(ns('line',{x1:x+s,y1:y,x2:x+s+3,y2:y-2,stroke:c,'stroke-width':'0.8','stroke-linecap':'round'}));
+      g.appendChild(ns('line',{x1:x+s,y1:y,x2:x+s+3,y2:y+2,stroke:c,'stroke-width':'0.8','stroke-linecap':'round'}));
+    },
+    // 3 — gravity fork: circle above, three lines below
+    () => {
+      g.appendChild(ns('circle',{cx:x,cy:y-3,r:3,fill:'none',stroke:c,'stroke-width':'0.9'}));
+      g.appendChild(ns('line',{x1:x,y1:y,x2:x-3,y2:y+s,stroke:c,'stroke-width':'0.9','stroke-linecap':'round'}));
+      g.appendChild(ns('line',{x1:x,y1:y,x2:x,y2:y+s,stroke:c,'stroke-width':'0.9','stroke-linecap':'round'}));
+      g.appendChild(ns('line',{x1:x,y1:y,x2:x+3,y2:y+s,stroke:c,'stroke-width':'0.9','stroke-linecap':'round'}));
+    },
+    // 4 — signal pulse: concentric arcs
+    () => {
+      g.appendChild(ns('path',{d:`M ${x-4},${y-3} A 5,5 0 0,1 ${x+4},${y-3}`,fill:'none',stroke:c,'stroke-width':'1','stroke-linecap':'round'}));
+      g.appendChild(ns('path',{d:`M ${x+4},${y+3} A 5,5 0 0,1 ${x-4},${y+3}`,fill:'none',stroke:c,'stroke-width':'1','stroke-linecap':'round'}));
+      g.appendChild(ns('circle',{cx:x,cy:y,r:1.5,fill:'#C4F135'}));
+    },
+    // 5 — radio: antenna + wave
+    () => {
+      g.appendChild(ns('line',{x1:x,y1:y-s,x2:x,y2:y-1,stroke:c,'stroke-width':'1.5','stroke-linecap':'round'}));
+      g.appendChild(ns('path',{d:`M ${x-s},${y+1} Q ${x-2},${y-3} ${x},${y+1} Q ${x+2},${y+5} ${x+s},${y+1}`,fill:'none',stroke:c,'stroke-width':'1','stroke-linecap':'round'}));
+    },
+    // 6 — signal pulse (interaction): step waveform
+    () => {
+      g.appendChild(ns('polyline',{points:`${x-s},${y} ${x-3},${y} ${x-3},${y-4} ${x+1},${y-4} ${x+1},${y+4} ${x+3},${y+4} ${x+3},${y} ${x+s},${y}`,fill:'none',stroke:c,'stroke-width':'1','stroke-linecap':'round','stroke-linejoin':'round'}));
+    },
+    // 7 — flashlight: cone shape
+    () => {
+      g.appendChild(ns('polygon',{points:`${x},${y-s} ${x-4},${y+4} ${x+4},${y+4}`,fill:'none',stroke:c,'stroke-width':'0.9','stroke-linejoin':'round'}));
+      g.appendChild(ns('line',{x1:x-5,y1:y+5,x2:x+5,y2:y+5,stroke:c,'stroke-width':'0.9','stroke-linecap':'round'}));
+    },
+    // 8 — stop time: hexagon bisected
+    () => {
+      g.appendChild(ns('polygon',{points:`${x},${y-s} ${x+5},${y-3} ${x+5},${y+3} ${x},${y+s} ${x-5},${y+3} ${x-5},${y-3}`,fill:'none',stroke:c,'stroke-width':'0.9','stroke-linejoin':'round'}));
+      g.appendChild(ns('line',{x1:x-5,y1:y,x2:x+5,y2:y,stroke:c,'stroke-width':'1.2','stroke-linecap':'round'}));
+    },
+    // 9 — unknown A: starburst
+    () => {
+      for(let a=0;a<6;a++){
+        const ang=a*60; const p1=pt(ang,2,x,y); const p2=pt(ang,s,x,y);
+        g.appendChild(ns('line',{x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,stroke:c,'stroke-width':'0.8','stroke-linecap':'round'}));
+      }
+      g.appendChild(ns('circle',{cx:x,cy:y,r:2,fill:'none',stroke:c,'stroke-width':'0.8'}));
+    },
+    // 10 — unknown B: nested triangles
+    () => {
+      g.appendChild(ns('polygon',{points:`${x},${y-s} ${x+5},${y+3} ${x-5},${y+3}`,fill:'none',stroke:c,'stroke-width':'0.8','stroke-linejoin':'round'}));
+      g.appendChild(ns('polygon',{points:`${x},${y-2} ${x+2},${y+1} ${x-2},${y+1}`,fill:'none',stroke:c,'stroke-width':'0.8','stroke-linejoin':'round'}));
+    },
+    // 11 — unknown C: brackets + center
+    () => {
+      g.appendChild(ns('polyline',{points:`${x-2},${y-s} ${x-s},${y-s} ${x-s},${y+s} ${x-2},${y+s}`,fill:'none',stroke:c,'stroke-width':'0.9','stroke-linecap':'round','stroke-linejoin':'round'}));
+      g.appendChild(ns('polyline',{points:`${x+2},${y-s} ${x+s},${y-s} ${x+s},${y+s} ${x+2},${y+s}`,fill:'none',stroke:c,'stroke-width':'0.9','stroke-linecap':'round','stroke-linejoin':'round'}));
+      g.appendChild(ns('circle',{cx:x,cy:y,r:2,fill:'none',stroke:c,'stroke-width':'0.9'}));
+    },
+  ];
+
+  if (designs[index]) designs[index]();
+}
+
+// ── Screen content ─────────────────────────────────────────
+const MODULES = {
+  nav: {
+    gem: ['#1D9E75','#9FE1CB'],
+    draw(svg) {
+      svg.innerHTML = '';
+      const c = 74;
+      [50,34,20].forEach(r => svg.appendChild(ns('circle',{cx:c,cy:c,r,fill:'none',stroke:'#2D1B4E','stroke-width':'0.5'})));
+      [['N',c,16,'#C4F135'],['E',110,c,'#A888DD'],['S',c,132,'#A888DD'],['W',38,c,'#A888DD']].forEach(([t,x,y,col])=>{
+        const el=ns('text',{x,y,'text-anchor':'middle','dominant-baseline':'central','font-size':'9','font-family':'Courier New, monospace',fill:col});
+        el.textContent=t; svg.appendChild(el);
+      });
+      // Needle tip — id so we can update it dynamically
+      const needle = ns('line',{id:'navNeedle',x1:c,y1:c,x2:c,y2:20,stroke:'#C4F135','stroke-width':'2','stroke-linecap':'round'});
+      svg.appendChild(needle);
+      const needleTail = ns('line',{id:'navNeedleTail',x1:c,y1:c,x2:c,y2:100,stroke:'#7B4FBF','stroke-width':'1.5','stroke-linecap':'round'});
+      svg.appendChild(needleTail);
+      svg.appendChild(ns('circle',{cx:c,cy:c,r:4,fill:'#C4F135'}));
+      svg.appendChild(ns('circle',{cx:c,cy:c,r:2,fill:'#100820'}));
+      // Blip representing the cube target — id so position updates
+      const blip=ns('circle',{id:'navBlip',cx:95,cy:45,r:3,fill:'#C4F135',opacity:'0.8'});
+      blip.style.animation='blink 1.4s ease-in-out infinite';
+      svg.appendChild(blip);
+    }
+  },
+  radio: {
+    gem: ['#BA7517','#FAC775'],
+    draw(svg) {
+      svg.innerHTML = '';
+      const c = 74;
+      const bars = [16,26,20,36,24,32,18,28,14,22,30];
+      bars.forEach((h,i)=>{
+        const x=14+i*11;
+        svg.appendChild(ns('rect',{x,y:70-h,width:8,height:h,rx:2,fill:'#533888',opacity:'0.45',id:`radioBar${i}`}));
+      });
+      // Tuner line with id so we can move it
+      svg.appendChild(ns('line',{id:'radioTuner',x1:74,y1:22,x2:74,y2:72,stroke:'#EF9F27','stroke-width':'1.5','stroke-dasharray':'2 2',opacity:'0.8'}));
+      const freq=ns('text',{id:'radioFreq',x:c,y:98,'text-anchor':'middle','dominant-baseline':'central','font-size':'16','font-family':'Courier New, monospace',fill:'#EF9F27','font-weight':'bold'});
+      freq.textContent='88.0'; svg.appendChild(freq);
+      const unit=ns('text',{x:c,y:114,'text-anchor':'middle','dominant-baseline':'central','font-size':'8','font-family':'Courier New, monospace',fill:'#A888DD'});
+      unit.textContent='temporal freq'; svg.appendChild(unit);
+    }
+  },
+  signal: {
+    gem: ['#7F77DD','#AFA9EC'],
+    draw(svg) {
+      svg.innerHTML = '';
+      const c = 74;
+      [48,32,18].forEach((r,i)=>{
+        const el=ns('circle',{cx:c,cy:c,r,fill:'none',stroke:'#7F77DD','stroke-width':'1',opacity:0.15+i*0.2});
+        svg.appendChild(el);
+      });
+      svg.appendChild(ns('circle',{cx:c,cy:c,r:7,fill:'#7B4FBF',opacity:'0.8'}));
+      svg.appendChild(ns('circle',{cx:c,cy:c,r:3,fill:'#C4F135'}));
+      [[98,50,4],[46,96,3],[106,88,2]].forEach(([x,y,r])=>{
+        const b=ns('circle',{cx:x,cy:y,r,fill:'#C4F135',opacity:'0.6'});
+        b.style.animation=`blink ${1+Math.random()*0.8}s ease-in-out infinite`;
+        svg.appendChild(b);
+      });
+    }
+  },
+  unlock: {
+    gem: ['#E24B4A','#F09595'],
+    draw(svg) {
+      svg.innerHTML = '';
+      const c = 74;
+      // Icon at top — updates to show current cycling symbol
+      const icon=ns('text',{id:'unlockIcon',x:c,y:28,'text-anchor':'middle','dominant-baseline':'central','font-size':'20','font-family':'Courier New, monospace',fill:'#C4F135'});
+      icon.textContent = UNLOCK_SYMBOLS[unlockSymbolIdx];
+      svg.appendChild(icon);
+      // Four slots
+      for(let i=0;i<4;i++){
+        const bx=20+i*26;
+        const locked = i < unlockSlot;
+        const active = i === unlockSlot;
+        const done   = unlockSlot >= 4;
+        const stroke = locked||done ? '#C4F135' : active ? '#C4F135' : '#3A2460';
+        const sw     = active ? '1.5' : locked||done ? '1' : '0.5';
+        const fill   = active ? '#1a0f35' : '#0d0520';
+        svg.appendChild(ns('rect',{id:`unlockSlot${i}`,x:bx,y:50,width:22,height:24,rx:3,fill,stroke,'stroke-width':sw}));
+        const sym = locked||done ? lockedSymbols[i] : active ? UNLOCK_SYMBOLS[unlockSymbolIdx] : '–';
+        const col  = locked||done ? '#C4F135' : active ? '#EF9F27' : '#3A2460';
+        const t=ns('text',{id:`unlockSlotText${i}`,x:bx+11,y:62,'text-anchor':'middle','dominant-baseline':'central','font-size':'11','font-family':'Courier New, monospace',fill:col});
+        t.textContent=sym;
+        svg.appendChild(t);
+      }
+      // Status line
+      const status = unlockSlot >= 4 ? 'sequence accepted' : `slot ${unlockSlot+1} of 4 · press button to lock`;
+      const scol   = unlockSlot >= 4 ? '#1D9E75' : '#A888DD';
+      const h1=ns('text',{id:'unlockStatus',x:c,y:90,'text-anchor':'middle','dominant-baseline':'central','font-size':'7.5','font-family':'Courier New, monospace',fill:scol});
+      h1.textContent=status; svg.appendChild(h1);
+      const h2=ns('text',{x:c,y:104,'text-anchor':'middle','dominant-baseline':'central','font-size':'7','font-family':'Courier New, monospace',fill:'#533888'});
+      h2.textContent='turn ring to cycle symbols'; svg.appendChild(h2);
+    }
+  }
+};
+
+function setModule(key) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.textContent === key));
+  if (key === 'unlock') {
+    unlockSlot = 0; unlockSymbolIdx = 0;
+    lockedSymbols = ['','','','']; unlockAccum = 0;
+  }
+  const m = MODULES[key];
+  m.draw(document.getElementById('screenSvg'));
+  gemFill = m.gem[0]; gemStroke = m.gem[1];
+  updateGem();
+}
+
+// ── Drag rotation ──────────────────────────────────────────
+const ringLayer = document.getElementById('ringLayer');
+const ringSvg   = document.getElementById('ringSvg');
+let isDragging = false, ringAngle = 0, lastMouseAngle = 0;
+
+function mouseAngle(e) {
+  const rect = ringLayer.getBoundingClientRect();
+  const mx = e.touches ? e.touches[0].clientX : e.clientX;
+  const my = e.touches ? e.touches[0].clientY : e.clientY;
+  return Math.atan2(my - (rect.top + rect.height/2), mx - (rect.left + rect.width/2)) * 180 / Math.PI;
+}
+
+ringLayer.addEventListener('mousedown', e => { isDragging=true; ringLayer.classList.add('dragging'); lastMouseAngle=mouseAngle(e); e.preventDefault(); });
+window.addEventListener('mousemove', e => {
+  if(!isDragging) return;
+  let delta = mouseAngle(e) - lastMouseAngle;
+  if(delta>180) delta-=360; if(delta<-180) delta+=360;
+  ringAngle+=delta; lastMouseAngle=mouseAngle(e);
+  applyRotation(delta);
+});
+window.addEventListener('mouseup', () => { isDragging=false; ringLayer.classList.remove('dragging'); });
+ringLayer.addEventListener('touchstart', e => { isDragging=true; lastMouseAngle=mouseAngle(e); e.preventDefault(); }, {passive:false});
+window.addEventListener('touchmove', e => {
+  if(!isDragging) return;
+  let delta = mouseAngle(e) - lastMouseAngle;
+  if(delta>180) delta-=360; if(delta<-180) delta+=360;
+  ringAngle+=delta; lastMouseAngle=mouseAngle(e);
+  applyRotation(delta);
+}, {passive:false});
+window.addEventListener('touchend', () => { isDragging=false; });
+
+function applyRotation(delta = 0) {
+  ringSvg.style.transform = `rotate(${ringAngle}deg)`;
+  ringSvg.style.transformOrigin = '50% 50%';
+  const norm = ((ringAngle % 360) + 360) % 360;
+  document.getElementById('readout').textContent = `ring · ${Math.round(norm)}°`;
+  updateCube(delta);
+}
+
+
+// ── Unlock state ───────────────────────────────────────────
+const UNLOCK_SYMBOLS = ['⊕','◈','⌬','⍉','⏻','⊛','⋈','⍙','⍜'];
+let unlockSlot = 0;           // which slot is active (0-3)
+let unlockSymbolIdx = 0;      // which symbol is currently shown
+let lockedSymbols = ['','','','']; // symbols locked in per slot
+let unlockAccum = 0;          // accumulator for symbol cycling
+const UNLOCK_CYCLE_THRESHOLD = 18; // degrees per symbol step
+
+function getSymbolAtGem() {
+  // Gem sits at -90deg absolute. Ring has rotated by ringAngle.
+  // Each rune i starts at runeAngle(i) = -90 + i*30.
+  // After ring rotation its position is runeAngle(i) + ringAngle.
+  // Find which rune is currently closest to -90deg (top/gem position).
+  const GEM_ANGLE = -90;
+  let closest = 0, minDist = Infinity;
+  for (let i = 0; i < NUM_RUNES; i++) {
+    const pos = (-90 + i * STEP + ringAngle) % 360;
+    // Normalize to -180..180
+    let dist = ((pos - GEM_ANGLE + 540) % 360) - 180;
+    if (Math.abs(dist) < minDist) {
+      minDist = Math.abs(dist);
+      closest = i;
+    }
+  }
+  // Map rune index to unlock symbol index (wrap to UNLOCK_SYMBOLS length)
+  return closest % UNLOCK_SYMBOLS.length;
+}
+
+function updateUnlock(delta) {
+  if (unlockSlot >= 4) return;
+  const newIdx = getSymbolAtGem();
+  if (newIdx !== unlockSymbolIdx) {
+    unlockSymbolIdx = newIdx;
+    redrawUnlockScreen();
+  }
+}
+
+function redrawUnlockScreen() {
+  // Update just the dynamic parts without full redraw
+  const icon = document.getElementById('unlockIcon');
+  if (icon) icon.textContent = UNLOCK_SYMBOLS[unlockSymbolIdx];
+
+  for (let i = 0; i < 4; i++) {
+    const slotEl = document.getElementById(`unlockSlot${i}`);
+    const textEl = document.getElementById(`unlockSlotText${i}`);
+    if (!slotEl || !textEl) return;
+    const locked = i < unlockSlot;
+    const active = i === unlockSlot;
+    const done   = unlockSlot >= 4;
+
+    slotEl.setAttribute('stroke', locked||done ? '#C4F135' : active ? '#C4F135' : '#3A2460');
+    slotEl.setAttribute('stroke-width', active ? '1.5' : locked||done ? '1' : '0.5');
+    slotEl.setAttribute('fill', active ? '#1a0f35' : '#0d0520');
+
+    const sym = locked||done ? lockedSymbols[i] : active ? UNLOCK_SYMBOLS[unlockSymbolIdx] : '–';
+    const col  = locked||done ? '#C4F135' : active ? '#EF9F27' : '#3A2460';
+    textEl.textContent = sym;
+    textEl.setAttribute('fill', col);
+  }
+
+  const statusEl = document.getElementById('unlockStatus');
+  if (statusEl) {
+    const done = unlockSlot >= 4;
+    statusEl.textContent = done ? 'sequence accepted' : `slot ${unlockSlot+1} of 4 · press button to lock`;
+    statusEl.setAttribute('fill', done ? '#1D9E75' : '#A888DD');
+  }
+}
+
+function unlockPressButton() {
+  if (unlockSlot >= 4) {
+    // Reset on button press after completion
+    unlockSlot = 0;
+    unlockSymbolIdx = 0;
+    lockedSymbols = ['','','',''];
+    unlockAccum = 0;
+    redrawUnlockScreen();
+    return;
+  }
+  lockedSymbols[unlockSlot] = UNLOCK_SYMBOLS[unlockSymbolIdx];
+  unlockSlot++;
+  if (unlockSlot >= 4) {
+    // Flash gem green on completion
+    const shape = document.getElementById('gemShape');
+    if(shape){ shape.setAttribute('fill','#1D9E75'); shape.setAttribute('stroke','#9FE1CB'); }
+  }
+  redrawUnlockScreen();
+}
+// ── Init ───────────────────────────────────────────────────
+
+// cube
+const cubeCanvas = document.getElementById('cubeCanvas');
+const ctx = cubeCanvas.getContext('2d');
+const CW = cubeCanvas.width, CH = cubeCanvas.height;
+let cubeX = CW / 2; // tracked independently so clamping never creates deadzone
+const CUBE_MIN = 52, CUBE_MAX = CW - 52;
+const CUBE_SPEED = 0.9;
+
+function drawCube(cx, cy, size) {
+  ctx.clearRect(0, 0, CW, CH);
+  const w = size, h = size;
+  const dx = size * 0.42, dy = size * 0.22;
+  const fl={x:cx-w/2,y:cy+h/2}, fr={x:cx+w/2,y:cy+h/2};
+  const tl={x:cx-w/2,y:cy-h/2}, tr={x:cx+w/2,y:cy-h/2};
+  const bfl={x:fl.x+dx,y:fl.y-dy}, bfr={x:fr.x+dx,y:fr.y-dy};
+  const btl={x:tl.x+dx,y:tl.y-dy}, btr={x:tr.x+dx,y:tr.y-dy};
+  function face(pts,fill){
+    ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
+    pts.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));
+    ctx.closePath(); ctx.fillStyle=fill; ctx.fill();
+    ctx.strokeStyle='#44296E'; ctx.lineWidth=0.8; ctx.stroke();
+  }
+  ctx.save(); ctx.globalAlpha=0.3;
+  ctx.beginPath(); ctx.ellipse(cx+dx/2,cy+h/2+7,w/2+dx/2,7,0,0,Math.PI*2);
+  ctx.fillStyle='#100820'; ctx.fill(); ctx.restore();
+  face([fl,bfl,btl,tl],'#1a0d35');
+  face([fr,bfr,btr,tr],'#533888');
+  face([fl,fr,tr,tl],'#3A2460');
+  face([tl,tr,btr,btl],'#7B4FBF');
+  ctx.beginPath(); ctx.moveTo(tl.x,tl.y); ctx.lineTo(tr.x,tr.y);
+  ctx.strokeStyle='#C4F135'; ctx.lineWidth=1.5;
+  ctx.shadowColor='#C4F135'; ctx.shadowBlur=6; ctx.stroke(); ctx.shadowBlur=0;
+  ctx.beginPath(); ctx.moveTo(tl.x,tl.y); ctx.lineTo(fl.x,fl.y);
+  ctx.strokeStyle='#C4F135'; ctx.lineWidth=0.8; ctx.globalAlpha=0.35; ctx.stroke(); ctx.globalAlpha=1;
+}
+
+
+
+function updateRadio(cubeScreenX) {
+  const tuner = document.getElementById('radioTuner');
+  const freqEl = document.getElementById('radioFreq');
+  if (!tuner || !freqEl) return;
+
+  // Map cubeX (CUBE_MIN..CUBE_MAX) to bar range (14..124 = 11 bars * 11px + 8px)
+  const norm = (cubeScreenX - CUBE_MIN) / (CUBE_MAX - CUBE_MIN); // 0..1
+  const tunerX = 14 + norm * (134 - 14);
+  tuner.setAttribute('x1', tunerX);
+  tuner.setAttribute('x2', tunerX);
+
+  // Frequency: map 0..1 to 88.0..108.0 MHz
+  const freq = 88.0 + norm * 20.0;
+  freqEl.textContent = freq.toFixed(1);
+
+  // Highlight the bar the tuner is nearest to
+  const bars = [16,26,20,36,24,32,18,28,14,22,30];
+  const activeBar = Math.round(norm * (bars.length - 1));
+  bars.forEach((h, i) => {
+    const bar = document.getElementById(`radioBar${i}`);
+    if (!bar) return;
+    const isActive = i === activeBar;
+    bar.setAttribute('fill', isActive ? '#EF9F27' : '#533888');
+    bar.setAttribute('opacity', isActive ? '1' : '0.45');
+    // Also update height slightly around active for a visual sweep effect
+    const dist = Math.abs(i - activeBar);
+    const newH = dist === 0 ? h * 1.15 : dist === 1 ? h * 0.9 : h;
+    bar.setAttribute('height', Math.round(newH));
+    bar.setAttribute('y', 70 - Math.round(newH));
+  });
+}
+function updateNavNeedle(cubeScreenX) {
+  const needle = document.getElementById('navNeedle');
+  const tail   = document.getElementById('navNeedleTail');
+  const blip   = document.getElementById('navBlip');
+  if (!needle) return;
+
+  // Map cube canvas X (0..CW) to compass screen coords (0..148)
+  // Compass screen center is at 74,74 in its own viewBox
+  const sc = 74, sr = 50; // screen center and needle length
+  const normX = (cubeScreenX - CW/2) / (CW/2); // -1 to +1
+  // Angle: map normX to -90..90 degrees (left = west, right = east)
+  const angleDeg = normX * 80;
+  const angleRad = (angleDeg - 90) * Math.PI / 180;
+
+  // Needle tip
+  const tx = sc + sr * Math.cos(angleRad);
+  const ty = sc + sr * Math.sin(angleRad);
+  needle.setAttribute('x2', tx);
+  needle.setAttribute('y2', ty);
+
+  // Tail points opposite
+  const tailRad = angleRad + Math.PI;
+  const tlx = sc + 26 * Math.cos(tailRad);
+  const tly = sc + 26 * Math.sin(tailRad);
+  tail.setAttribute('x2', tlx);
+  tail.setAttribute('y2', tly);
+
+  // Blip follows needle tip but slightly short (on the ring)
+  const br = 44;
+  if (blip) {
+    blip.setAttribute('cx', sc + br * Math.cos(angleRad));
+    blip.setAttribute('cy', sc + br * Math.sin(angleRad));
+  }
+}
+function updateCube(delta = 0) {
+  // Move cubeX directly by delta — clamp after so reversing always responds immediately
+  cubeX = Math.max(CUBE_MIN, Math.min(CUBE_MAX, cubeX + delta * CUBE_SPEED));
+  drawCube(cubeX, CH/2 - 8, 46);
+  updateNavNeedle(cubeX);
+  updateRadio(cubeX);
+  if (document.querySelector('.tab.active') && document.querySelector('.tab.active').textContent === 'unlock') {
+    updateUnlock(delta);
+  }
+}
+
+buildRing();
+setModule('nav');
+updateCube();
+document.getElementById('sideBtn').addEventListener('click', () => {
+  if (document.querySelector('.tab.active') && document.querySelector('.tab.active').textContent === 'unlock') {
+    unlockPressButton();
+  }
+});
+</script>
+</body>
+</html>
